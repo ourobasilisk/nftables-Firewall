@@ -1,0 +1,83 @@
+  ################
+  ### nftables ###
+  ################
+
+  networking.nftables.enable = true;
+  networking.firewall.enable = false;
+
+  networking.nftables.ruleset = ''
+    table inet filter {
+
+    # Input
+    chain input {
+      type filter hook input priority 0;
+      policy drop;
+
+      #Loopback
+      iifname "lo" accept
+
+      # Established connections
+      ct state established,related accept
+
+      # VPN traffic
+      iifname "mullvad" accept
+
+      # Libvirt DHCP
+      iifname "virbr0" udp dport 67 accept
+
+      # Libvirt DNS
+      iifname "virbr0" udp dport 53 accept
+      iifname "virbr0" tcp dport 53 accept
+
+      # SSH from LAN & wg0
+      ip saddr 192.168.1.0/24 tcp dport 22 accept
+      #iifname "mullvad" tcp dport 22 ct state new accept
+    }
+
+    # Foward
+    chain forward {
+      type filter hook forward priority 0;
+      policy drop;
+
+      # VM -> VPN
+      iifname "virbr0" oifname "mullvad" accept
+
+      # VPN -> VM replies
+      iifname "mullvad" oifname "virbr0" ct state established,related accept
+    }
+
+    # Output
+    chain output {
+      type filter hook output priority 0;
+      policy drop;
+
+      oifname "lo" accept
+      ct state established,related accept
+
+      # VPN tunnel
+      oifname "mullvad" accept
+
+      # SSH to LAN
+      ip daddr 192.168.1.0/24 tcp dport 22 accept
+
+      # Libvirt DHCP replies
+      oifname "virbr0" udp sport 67 udp dport 68 accept
+
+      # Allow WireGuard handshakes through physical network interfaces
+      oifname { "eno1", "wlp9s0" } udp dport 51820 accept
+
+      # Allow VPN bypass
+      #oifname "wlp9s0" tcp dport 25565 accept
+    }
+  }
+
+    table ip nat {
+      chain postrouting {
+        type nat hook postrouting priority 100;
+        policy accept;
+
+        # NAT VM traffic through Mullvad
+        ip saddr 192.168.122.0/24 oifname "mullvad" masquerade
+      }
+    }
+  '';
